@@ -29,6 +29,7 @@ target_link_options(projectM_SDL_emscripten
         "SHELL:-s MIN_WEBGL_VERSION=2"
         "SHELL:-s MAX_WEBGL_VERSION=2"
         "SHELL:-s FULL_ES2=1"
+        "SHELL:-s FULL_ES3=1"
         "SHELL:-s ALLOW_MEMORY_GROWTH=1"
         "SHELL:--preload-file ${PRESETS_DIR}@/presets"
         )

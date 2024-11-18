@@ -8,6 +8,7 @@
 #include <projectM-4/playlist.h>
 
 #include <emscripten.h>
+#include <emscripten/html5_webgl.h>
 
 #include <GL/gl.h>
 
@@ -15,8 +16,17 @@
 
 #include <cmath>
 #include <string>
+#include <vector>
 
 const int FPS = 60;
+
+EM_JS(int, canvas_get_width, (),{
+    return canvas.width;
+});
+
+EM_JS(int, canvas_get_height, (), {
+    return canvas.height;
+});
 
 struct projectMApp
 {
@@ -29,6 +39,8 @@ struct projectMApp
     int audioInputDeviceIndex{ 0 };
     int audioChannelsCount{ 0 };
     bool isFullscreen{ false };
+    int width{};
+    int height{};
 };
 
 static projectMApp app;
@@ -186,30 +198,20 @@ void presetSwitchedEvent(bool isHardCut, unsigned int index, void* context)
     SDL_SetWindowTitle(app.win, newTitle.c_str());
 }
 
-void generateRandomAudioData()
-{
-    short pcm_data[2][512];
-
-    for (int i = 0; i < 512; i++)
-    {
-        pcm_data[0][i] = static_cast<short>((static_cast<double>(rand()) / (static_cast<double>(RAND_MAX)) *
-                                             (pow(2, 14))));
-        pcm_data[1][i] = static_cast<short>((static_cast<double>(rand()) / (static_cast<double>(RAND_MAX)) *
-                                             (pow(2, 14))));
-
-        if (i % 2 == 1)
-        {
-            pcm_data[0][i] = -pcm_data[0][i];
-            pcm_data[1][i] = -pcm_data[1][i];
-        }
-    }
-
-    projectm_pcm_add_int16(app.projectM, &pcm_data[0][0], 512, PROJECTM_STEREO);
-}
-
 void renderFrame(void* appArg)
 {
     SDL_Event evt;
+
+    int width = canvas_get_width();
+    int height = canvas_get_height();
+
+    if (width != app.width || height != app.height)
+    {
+        app.width = width;
+        app.height = height;
+
+        projectm_set_window_size(app.projectM, app.width, app.height);
+    }
 
     auto* appContext = reinterpret_cast<projectMApp*>(appArg);
 
@@ -225,11 +227,6 @@ void renderFrame(void* appArg)
             break;
     }
 
-    if (appContext->audioChannelsCount > 2 || appContext->audioChannelsCount < 1)
-    {
-        generateRandomAudioData();
-    }
-
     glClearColor(0.0, 0.5, 0.0, 0.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -241,12 +238,12 @@ void renderFrame(void* appArg)
 
 int main(int argc, char* argv[])
 {
-    int width = 1024;
-    int height = 1024;
+    app.width = 1920;
+    app.height = 1080;
 
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
 
-    SDL_CreateWindowAndRenderer(width, height, SDL_WINDOW_OPENGL, &app.win, &app.renderer);
+    SDL_CreateWindowAndRenderer(app.width, app.height, SDL_WINDOW_OPENGL, &app.win, &app.renderer);
     if (!app.win || !app.renderer)
     {
         fprintf(stderr, "Failed to create SDL renderer: %s\n", SDL_GetError());
@@ -254,6 +251,11 @@ int main(int argc, char* argv[])
     }
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "SDL renderer initialized.\n");
+
+    // Enable floating-point texture support for motion vector grid.
+    auto webGlContext = emscripten_webgl_get_current_context();
+    emscripten_webgl_enable_extension(webGlContext, "OES_texture_float");
+    emscripten_webgl_enable_extension(webGlContext, "OES_texture_float_linear");
 
     app.projectM = projectm_create();
     if (!app.projectM) {
@@ -269,17 +271,22 @@ int main(int argc, char* argv[])
     }
 
     projectm_playlist_set_preset_switched_event_callback(app.playlist, &presetSwitchedEvent, nullptr);
+    projectm_set_preset_switch_failed_event_callback(app.projectM, &presetSwitchFailedEvent, nullptr);
 
-    projectm_set_mesh_size(app.projectM, 48, 32);
+    projectm_set_mesh_size(app.projectM, 48, 48);
     projectm_set_fps(app.projectM, FPS);
-    projectm_set_window_size(app.projectM, width, height);
-    projectm_set_soft_cut_duration(app.projectM, 3.0);
-    projectm_set_preset_duration(app.projectM, 5);
+    projectm_set_window_size(app.projectM, app.width, app.height);
+    projectm_set_soft_cut_duration(app.projectM, 5.0);
+    projectm_set_preset_duration(app.projectM, 15);
     projectm_set_beat_sensitivity(app.projectM, 1.0);
     projectm_set_aspect_correction(app.projectM, true);
     projectm_set_easter_egg(app.projectM, 0);
 
-    projectm_set_preset_switch_failed_event_callback(app.projectM, &presetSwitchFailedEvent, nullptr);
+    std::string texturePath = "/textures";
+    std::vector<const char*> texturePathList;
+    texturePathList.push_back(texturePath.data());
+
+    projectm_set_texture_search_paths(app.projectM, texturePathList.data(), 1);
 
     projectm_playlist_set_shuffle(app.playlist, true);
     projectm_playlist_add_path(app.playlist, "/presets", true, true);
